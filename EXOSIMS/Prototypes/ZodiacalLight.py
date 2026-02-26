@@ -58,6 +58,8 @@ class ZodiacalLight(object):
             1 exo-zodi brightness magnitude (per arcsec2)
         magZ (float):
             1 zodi brightness magnitude (per arcsec2)
+        nEZ (float):
+            Number of zodis set for each exozodi. Only used if varEZ is zero. Defaults to 1.    
         varEZ (float):
             Variance of exozodi brightness. If non-zero treat as the
             variance of a log-normal distribution. If zero, do not
@@ -71,7 +73,7 @@ class ZodiacalLight(object):
 
     _modtype = "ZodiacalLight"
 
-    def __init__(self, magZ=23, magEZ=22, varEZ=0, cachedir=None, **specs):
+    def __init__(self, magZ=23, magEZ=22, varEZ=0, nEZ=1, cachedir=None, **specs):
         # Define units
         self.zodi_intens_unit = u.Unit(u.W / u.m**2 / u.sr / u.um)
         self.zodi_intens_unit_photon = u.Unit(u.ph / u.s / u.m**2 / u.um / u.sr)
@@ -91,7 +93,9 @@ class ZodiacalLight(object):
         self.magZ = float(magZ)  # 1 zodi brightness (per arcsec2)
         self.magEZ = float(magEZ)  # 1 exo-zodi brightness (per arcsec2)
         self.varEZ = float(varEZ)  # exo-zodi variation (variance of log-normal dist)
+        self.nEZ = float(nEZ)
         assert self.varEZ >= 0, "Exozodi variation must be >= 0"
+        assert self.nEZ >= 0, "Number of zodis must be >= 0"
 
         # default zodi brightness
         self.fZ0 = 10 ** (-0.4 * self.magZ) << self.inv_arcsec2
@@ -118,6 +122,7 @@ class ZodiacalLight(object):
                 "global_min",
                 "fZMap",
                 "fZTimes",
+                "nEZ",
                 "zodi_intens_unit",
                 "zodi_intens_unit_photon",
                 "inv_arcsec2",
@@ -259,7 +264,7 @@ class ZodiacalLight(object):
         return fbeta
 
     def gen_systemnEZ(self, nStars):
-        """Ranomly generates the number of Exo-Zodi
+        """Randomly generates the number of Exo-Zodi
 
         Args:
             nStars (int):
@@ -270,7 +275,9 @@ class ZodiacalLight(object):
         """
 
         # assume log-normal distribution of variance
-        nEZ = np.ones(nStars)
+        nEZ = np.ones(nStars) * self.nEZ
+        if self.nEZ == 0:
+            return nEZ
         if self.varEZ != 0:
             mu = np.log(nEZ) - 0.5 * np.log(1.0 + self.varEZ / nEZ**2)
             v = np.sqrt(np.log(self.varEZ / nEZ**2 + 1.0))
