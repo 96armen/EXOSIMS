@@ -241,9 +241,7 @@ class TargetList(object):
         popStars (list, optional):
             List of target names that were removed from target list
         PostProcessing (:ref:`PostProcessing`):
-            :ref:`PostProcessing` object
-        redfactorEZ (float):
-            slope of exozodi intensity vs wavelength. Defaults to 0 (no exozodi enhancement)    
+            :ref:`PostProcessing` object  
         required_catalog_atts (list):
             Catalog attributes that may not be missing or nan
         Rmag (numpy.ndarray):
@@ -334,7 +332,6 @@ class TargetList(object):
         int_dMag=25,
         scaleWAdMag=False,
         popStars=None,
-        redfactorEZ=0.0,
         cherryPickStars=None,
         skipSaturationCalcs=True,
         massLuminosityRelationship="Henry1993",
@@ -361,7 +358,6 @@ class TargetList(object):
         self.filterBinaries = bool(filterBinaries)
         self.filter_for_char = bool(filter_for_char)
         self.earths_only = bool(earths_only)
-        self.redfactorEZ = float(redfactorEZ)
         self.scaleWAdMag = bool(scaleWAdMag)
         self.skipSaturationCalcs = bool(skipSaturationCalcs)
         self.massLuminosityRelationship = str(massLuminosityRelationship)
@@ -2609,7 +2605,7 @@ class TargetList(object):
         for mode in self.OpticalSystem.observingModes:
             fname = (
                 f"TargetList_{self.StarCatalogHex}"
-                f"nStars_{self.nStars}_mode_{mode['hex']}_redfactorEZ_{self.redfactorEZ}.JEZ0"
+                f"nStars_{self.nStars}_mode_{mode['hex']}.JEZ0"
             )
             JEZ0_path = Path(self.cachedir, fname)
             if JEZ0_path.exists():
@@ -2619,12 +2615,8 @@ class TargetList(object):
                 self.vprint(f"Loaded JEZ0 for mode {mode['hex']} from {JEZ0_path}")
             else:
                 color_factors = self.starColorFactor(mode)
-                # enhance or weaken EZ based on redderning factor (slope from Jewitt 2015)
-                EZmultiplier  = 1 + (mode["lam"] - 550*u.nm) / (100*u.nm) * self.redfactorEZ
-                # set to zero if negative
-                EZmultiplier = np.maximum(EZmultiplier, 0)
                 self.JEZ0[mode["hex"]] = self.ZodiacalLight.calc_JEZ0(
                     self.MV, self.L, color_factors, mode["bandpass"].equivwidth()
-                ) * EZmultiplier
+                )
                 with open(JEZ0_path, "wb") as f:
                     pickle.dump(self.JEZ0[mode["hex"]], f)

@@ -113,6 +113,8 @@ class SimulatedUniverse(object):
             Postprocessing object.
         r (astropy.units.quantity.Quantity):
             Current planet orbital radius (3xnPlans). Length units.
+        redfactorEZ (float):
+            slope of exozodi intensity vs wavelength. Defaults to 0 (no exozodi enhancement)        
         Rp (astropy.units.quantity.Quantity):
             Planet radius (length units).
         s (astropy.units.quantity.Quantity):
@@ -162,6 +164,7 @@ class SimulatedUniverse(object):
         commonSystemPlaneParams=[0, 2.25, 0, 2.25],
         commonSystemnEZ=True,
         fixed_nEZ_val=None,
+        redfactorEZ=0.0,
         **specs,
     ):
         self.AU_div_day = u.AU / u.day
@@ -188,8 +191,22 @@ class SimulatedUniverse(object):
         self._outspec["commonSystemnEZ"] = commonSystemnEZ
 
         # A fixed number of exozodi for every system
-        self.fixed_nEZ_val = fixed_nEZ_val
-        self._outspec["fixed_nEZ_val"] = fixed_nEZ_val
+        if fixed_nEZ_val is None:
+            self.fixed_nEZ_val = None
+        else:
+            try:
+                self.fixed_nEZ_val = float(fixed_nEZ_val)
+            except (TypeError, ValueError):
+                raise TypeError(
+                    "fixed_nEZ_val must be None or a non-negative scalar."
+                )
+            assert (
+                np.isfinite(self.fixed_nEZ_val) and self.fixed_nEZ_val >= 0
+            ), "Exozodi number must be >= 0"
+        self._outspec["fixed_nEZ_val"] = self.fixed_nEZ_val
+
+        # Exozodi reddening factor
+        self.redfactorEZ = float(redfactorEZ)
 
         # save fixed number of planets to generate
         self.fixedPlanPerStar = fixedPlanPerStar
@@ -611,6 +628,13 @@ class SimulatedUniverse(object):
         else:
             pinds = np.intersect1d(all_pinds, pInds)
         JEZ = JEZ0 * self.nEZ[pinds] * (1 / self.d[pinds].to("AU").value) ** 2 * fbeta
+
+        # Then scale JEZ by the reddening factor. Enhance or weaken EZ based on redderning factor (slope from Jewitt 2015)
+        EZmultiplier  = 1 + (mode["lam"] - 550*u.nm) / (100*u.nm) * self.redfactorEZ
+        # set to zero if negative
+        EZmultiplier = np.maximum(EZmultiplier, 0)
+        JEZ *= EZmultiplier
+
         return JEZ
 
     def set_planet_phase(self, beta=np.pi / 2):
