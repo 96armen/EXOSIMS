@@ -1,6 +1,7 @@
 import copy
 import gzip
 import importlib.resources
+import inspect
 import json
 import os.path
 import pickle
@@ -986,6 +987,7 @@ class TargetList(object):
         ZL = self.ZodiacalLight
         PPop = self.PlanetPopulation
         Comp = self.Completeness
+        comp_calc_sig = inspect.signature(Comp.comp_calc).parameters
 
         # grab zodi vals for any required calculations
         sInds = np.arange(self.nStars)
@@ -1111,8 +1113,16 @@ class TargetList(object):
                 self.saturation_comp = np.zeros(self.nStars) * np.nan
             else:
                 self.vprint("Calculating the saturation time completeness")
+                comp_kwargs = {}
+                if "TL" in comp_calc_sig:
+                    comp_kwargs["TL"] = self
+                if "sInds" in comp_calc_sig:
+                    comp_kwargs["sInds"] = sInds
                 self.saturation_comp = Comp.comp_calc(
-                    tmp_smin.to(u.AU).value, tmp_smax.to(u.AU).value, tmp_dMag
+                    tmp_smin.to(u.AU).value,
+                    tmp_smax.to(u.AU).value,
+                    tmp_dMag,
+                    **comp_kwargs,
                 )
                 with open(saturation_comp_path, "wb") as f:
                     pickle.dump(self.saturation_comp, f)
@@ -1142,6 +1152,18 @@ class TargetList(object):
             self.intCutoff_dMag = OS.calc_dMag_per_intTime(
                 intTimes, self, sInds, fZ, JEZ0, self.int_WA, self.filter_mode
             ).reshape((len(intTimes),))
+            bad_dmag_mask = ~np.isfinite(self.intCutoff_dMag)
+            if np.any(bad_dmag_mask):
+                self.vprint(
+                    "TargetList: "
+                    f"{np.sum(bad_dmag_mask)} non-finite intCutoff_dMag values found."
+                )
+                for i in np.where(bad_dmag_mask)[0]:
+                    sInd = int(sInds[i])
+                    self.vprint(
+                        f"sInd={sInd}, Name={self.Name[sInd]}, L={self.L[sInd]}, "
+                        f"d={self.dist[sInd]}, intCutoff_dMag={self.intCutoff_dMag[i]}"
+                    )
             with open(intCutoff_dMag_path, "wb") as f:
                 pickle.dump(self.intCutoff_dMag, f)
             self.vprint(f"intCutoff_dMag values stored in {intCutoff_dMag_path}")
@@ -1173,8 +1195,16 @@ class TargetList(object):
             self.vprint(f"Loaded intCutoff_comp values from {intCutoff_comp_path}")
         else:
             self.vprint("Calculating the integration cutoff time completeness")
+            comp_kwargs = {}
+            if "TL" in comp_calc_sig:
+                comp_kwargs["TL"] = self
+            if "sInds" in comp_calc_sig:
+                comp_kwargs["sInds"] = sInds
             self.intCutoff_comp = Comp.comp_calc(
-                tmp_smin.to(u.AU).value, tmp_smax.to(u.AU).value, tmp_dMag
+                tmp_smin.to(u.AU).value,
+                tmp_smax.to(u.AU).value,
+                tmp_dMag,
+                **comp_kwargs,
             )
             with open(intCutoff_comp_path, "wb") as f:
                 pickle.dump(self.intCutoff_comp, f)

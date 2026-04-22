@@ -26,6 +26,10 @@ class SimulatedUniverse(object):
         lucky_planets (bool):
             Used downstream in survey simulation. If True, planets are
             observed at optimal times. Defaults to False
+        luckier_planets (bool):
+            Used downstream in survey simulation. If True, planets are
+            characterized at their optimal observable phase rather than at
+            their current propagated phase. Defaults to False
         commonSystemPlane (bool):
             Planet inclinations are sampled as normally distributed about a
             common system plane. Defaults to False
@@ -78,6 +82,8 @@ class SimulatedUniverse(object):
             Planet inclinations (angle units)
         lucky_planets (bool):
             If True, planets are observed at optimal times.
+        luckier_planets (bool):
+            If True, planets are characterized at their optimal observable phase.
         M0 (astropy.units.quantity.Quantity):
             Initial planet mean anomaly (at mission start time).
         Min (float or None):
@@ -160,6 +166,7 @@ class SimulatedUniverse(object):
         Min=None,
         cachedir=None,
         lucky_planets=False,
+        luckier_planets=False,
         commonSystemPlane=False,
         commonSystemPlaneParams=[0, 2.25, 0, 2.25],
         commonSystemnEZ=True,
@@ -176,8 +183,13 @@ class SimulatedUniverse(object):
 
         # load the vprint function (same line in all prototype module constructors)
         self.vprint = vprint(specs.get("verbose", True))
+        assert not (
+            lucky_planets and luckier_planets
+        ), "lucky_planets and luckier_planets cannot both be True."
         self.lucky_planets = lucky_planets
         self._outspec["lucky_planets"] = lucky_planets
+        self.luckier_planets = luckier_planets
+        self._outspec["luckier_planets"] = luckier_planets
         self.commonSystemPlane = bool(commonSystemPlane)
         self._outspec["commonSystemPlane"] = commonSystemPlane
         assert (

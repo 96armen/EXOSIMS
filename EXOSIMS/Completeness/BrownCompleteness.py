@@ -121,7 +121,7 @@ class BrownCompleteness(Completeness):
         # bin height to precalculate that part of the integral
         self.Cpdfsum = np.cumsum(_Cpdf, axis=0) * ddMag
         self.Cpdfsum_interp = interpolate.RegularGridInterpolator(
-            (xcent, ycent), self.Cpdfsum.T
+            (xcent, ycent), self.Cpdfsum.T, bounds_error=False
         )
         self.xnew = xnew
         self.ynew = ynew
@@ -212,12 +212,20 @@ class BrownCompleteness(Completeness):
             scaled_dMag = TL.int_dMag - 2.5 * np.log10(L)
             mask = (scaled_dMag > self.ymin) & (smin < self.PlanetPopulation.rrange[1])
             int_comp[mask] = self.comp_calc(
-                smin[mask].to_value(u.AU), smax[mask].to_value(u.AU), scaled_dMag[mask]
+                smin[mask].to_value(u.AU),
+                smax[mask].to_value(u.AU),
+                scaled_dMag[mask],
+                TL=TL,
+                sInds=np.where(mask)[0],
             )
         else:
             mask = smin < self.PlanetPopulation.rrange[1]
             int_comp[mask] = self.comp_calc(
-                smin[mask].to_value(u.AU), smax[mask].to_value(u.AU), TL.int_dMag[mask]
+                smin[mask].to_value(u.AU),
+                smax[mask].to_value(u.AU),
+                TL.int_dMag[mask],
+                TL=TL,
+                sInds=np.where(mask)[0],
             )
 
         int_comp[int_comp < 1e-6] = 0.0
@@ -610,7 +618,7 @@ class BrownCompleteness(Completeness):
             intTimes, TL, sInds, fZ, JEZ, WA, mode, C_b=C_b, C_sp=C_sp, TK=TK
         )
 
-        comp = self.comp_calc(smin, smax, dMag)
+        comp = self.comp_calc(smin, smax, dMag, TL=TL, sInds=sInds)
         mask = smin > self.PlanetPopulation.rrange[1].to_value(u.AU)
         comp[mask] = 0.0
         # ensure completeness values are between 0 and 1
@@ -618,7 +626,7 @@ class BrownCompleteness(Completeness):
 
         return comp
 
-    def comp_calc(self, smin, smax, dMag):
+    def comp_calc(self, smin, smax, dMag, TL=None, sInds=None):
         """Calculates completeness for given minimum and maximum separations
         and dMag
 
@@ -632,6 +640,10 @@ class BrownCompleteness(Completeness):
                 Maximum separation(s) in AU
             dMag (float ndarray):
                 Difference in brightness magnitude
+            TL (TargetList module, optional):
+                TargetList object used for NaN reporting.
+            sInds (integer ndarray, optional):
+                Star indices matching the supplied inputs.
 
         Returns:
             float ndarray:
@@ -655,6 +667,20 @@ class BrownCompleteness(Completeness):
 
         # remove small values
         comp[comp < 1e-6] = 0.0
+        nan_mask = np.isnan(comp)
+        if np.any(nan_mask):
+            self.vprint(
+                f"BrownCompleteness: {np.sum(nan_mask)} NaN completeness values found."
+            )
+            if (TL is not None) and (sInds is not None):
+                for i in np.where(nan_mask)[0]:
+                    sInd = int(np.asarray(sInds)[i])
+                    self.vprint(
+                        f"sInd={sInd}, Name={TL.Name[sInd]}, "
+                        f"L={TL.L[sInd]}, d={TL.dist[sInd]}, "
+                        f"smin={smin[i]}, smax={smax[i]}, dMag={dMag[i]}"
+                    )
+        comp[nan_mask] = 0.0
 
         return comp
 
@@ -800,6 +826,20 @@ class BrownCompleteness(Completeness):
             TK=TK,
             analytic_only=True,
         ).reshape((len(intTimes),))
+        bad_dmag_mask = ~np.isfinite(dMag)
+        if np.any(bad_dmag_mask):
+            self.vprint(
+                "BrownCompleteness: "
+                f"{np.sum(bad_dmag_mask)} non-finite dMag values from "
+                "calc_dMag_per_intTime."
+            )
+            for i in np.where(bad_dmag_mask)[0]:
+                sInd = int(sInds[i])
+                self.vprint(
+                    f"sInd={sInd}, Name={TL.Name[sInd]}, L={TL.L[sInd]}, "
+                    f"d={TL.dist[sInd]}, intTime={intTimes[i]}, fZ={fZ[i]}, "
+                    f"JEZ={JEZ[i]}, WA={WA[i]}, dMag={dMag[i]}"
+                )
         # calculate separations based on IWA and OWA
         IWA = mode["IWA"]
         OWA = mode["OWA"]
@@ -823,6 +863,20 @@ class BrownCompleteness(Completeness):
             smin = smin / np.sqrt(L)
             smax = smax / np.sqrt(L)
             dMag -= 2.5 * np.log10(L)
+
+        bad_sep_mask = ~np.isfinite(smin) | ~np.isfinite(smax)
+        if np.any(bad_sep_mask):
+            self.vprint(
+                "BrownCompleteness: "
+                f"{np.sum(bad_sep_mask)} non-finite separation values in completeness "
+                "inputs."
+            )
+            for i in np.where(bad_sep_mask)[0]:
+                sInd = int(sInds[i])
+                self.vprint(
+                    f"sInd={sInd}, Name={TL.Name[sInd]}, L={TL.L[sInd]}, "
+                    f"d={TL.dist[sInd]}, smin={smin[i]}, smax={smax[i]}, dMag={dMag[i]}"
+                )
 
         return intTimes, sInds, fZ, JEZ, WA, smin, smax, dMag
 
