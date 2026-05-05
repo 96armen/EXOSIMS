@@ -440,7 +440,7 @@ class coroOnlyScheduler(SurveySimulation):
                             DRM["char_info"].append(char_data)
 
                         # do not revisit partial char if lucky_planets
-                        if SU.lucky_planets:
+                        if SU.lucky_planets or SU.luckier_planets:
                             self.char_starVisits[sInd] = self.nVisitsMax
 
                         # append result values to self.DRM
@@ -754,6 +754,13 @@ class coroOnlyScheduler(SurveySimulation):
                             WA = np.arctan(SU.a / TL.dist[SU.plan2star]).to("arcsec")[
                                 char_earths
                             ]  # working angle
+                        elif SU.luckier_planets:
+                            earth_JEZ = JEZ * np.ones(len(char_earths))
+                            luckier_dict = self.calc_luckier_planet_params(
+                                char_star, char_earths, fZ, earth_JEZ, char_mode
+                            )
+                            dMag = luckier_dict["dMag"]
+                            WA = luckier_dict["WA"]
                         else:
                             dMag = SU.dMag[char_earths]
                             WA = SU.WA[char_earths]
@@ -1127,6 +1134,16 @@ class coroOnlyScheduler(SurveySimulation):
                 e_WA = np.arctan(SU.a / TL.dist[SU.plan2star]).to(
                     "arcsec"
                 )  # working angle
+            elif SU.luckier_planets:
+                luckier_dict = self.calc_luckier_planet_params(
+                    sInd, pInds, fZ, JEZs, mode
+                )
+                dMags = luckier_dict["dMag"]
+                WAs = luckier_dict["WA"].to("arcsec").value
+                e_dMag = SU.dMag.copy()
+                e_WA = SU.WA.copy()
+                e_dMag[pInds] = dMags
+                e_WA[pInds] = WAs * u.arcsec
             else:
                 e_dMag = SU.dMag
                 e_WA = SU.WA
@@ -1279,7 +1296,21 @@ class coroOnlyScheduler(SurveySimulation):
                     # save planet parameters
                     systemParamss[i] = SU.dump_system_params(sInd)
                     # calculate signal and noise (electron count rates)
-                    if not SU.lucky_planets:
+                    if SU.luckier_planets:
+                        luckier_dict = self.calc_luckier_planet_params(
+                            sInd, planinds, fZs[i], JEZs[i], mode
+                        )
+                        Ss[i, :], Ns[i, :] = self.calc_signal_noise(
+                            sInd,
+                            planinds,
+                            dt,
+                            mode,
+                            fZ=fZs[i],
+                            JEZ=JEZs[i],
+                            dMag=luckier_dict["dMag"],
+                            WA=luckier_dict["WA"],
+                        )
+                    elif not SU.lucky_planets:
                         Ss[i, :], Ns[i, :] = self.calc_signal_noise(
                             sInd, planinds, dt, mode, fZ=fZs[i], JEZ=JEZs[i]
                         )
@@ -1335,9 +1366,9 @@ class coroOnlyScheduler(SurveySimulation):
             characterized = char.astype(int)
             WAchar = WAs[char] * u.arcsec
             # find the current WAs of characterized planets
-            if SU.lucky_planets:
+            if SU.lucky_planets or SU.luckier_planets:
                 # keep original WAs (note, the dump_system_params() above, whence comes
-                # systemParams, does not understand lucky_planets)
+                # systemParams, does not understand lucky_planets or luckier_planets)
                 pass
             else:
                 WAs = systemParams["WA"]
@@ -1525,6 +1556,16 @@ class coroOnlyScheduler(SurveySimulation):
                 e_WA = np.arctan(SU.a / TL.dist[SU.plan2star]).to(
                     "arcsec"
                 )  # working angle
+            elif SU.luckier_planets:
+                earth_pInds = pIndsDet[pinds_earthlike]
+                earth_JEZ = JEZ[pinds_earthlike]
+                luckier_dict = self.calc_luckier_planet_params(
+                    sInd, earth_pInds, fZ, earth_JEZ, mode
+                )
+                e_dMag = SU.dMag.copy()
+                e_WA = SU.WA.copy()
+                e_dMag[earth_pInds] = luckier_dict["dMag"]
+                e_WA[earth_pInds] = luckier_dict["WA"]
             else:
                 e_dMag = SU.dMag
                 e_WA = SU.WA

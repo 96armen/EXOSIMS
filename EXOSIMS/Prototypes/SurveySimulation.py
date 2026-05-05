@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional
 import astropy.constants as const
 import astropy.units as u
 import numpy as np
+import scipy.optimize
 from astropy.time import Time
 
 from EXOSIMS.util._numpy_compat import copy_if_needed
@@ -2825,6 +2826,136 @@ class SurveySimulation(object):
             known_stars = np.intersect1d(HIP_sInds, known_stars)
             known_rocky = np.intersect1d(HIP_sInds, known_rocky)
         return known_stars.astype(int), known_rocky.astype(int)
+
+    def calc_luckier_planet_params(self, sInd, pInds, fZ, JEZ, mode):
+        """Compute physically feasible beta, phi, dMag, and WA for planets by
+        minimizing integration time over phase angle beta.
+
+        Args:
+            sInd (int):
+                Star index
+            pInds (numpy.ndarray):
+                Planet indices
+            fZ (~astropy.units.Quantity):
+                Surface brightness of local zodiacal light in units of 1/arcsec2
+            JEZ (~astropy.units.Quantity):
+                Intensity of exo-zodiacal light in units of ph/s/m2/arcsec2
+            mode (dict):
+                Selected observing mode
+
+        Returns:
+            dict:
+                Dictionary with keys beta, phi, dMag, WA, and intTime.
+                Infeasible planets are returned as nan.
+        """
+
+        SU = self.SimulatedUniverse
+        TL = self.TargetList
+        OS = self.OpticalSystem
+        PPMod = SU.PlanetPhysicalModel
+
+        pInds = np.array(pInds, ndmin=1, dtype=int)
+        JEZ = u.Quantity(JEZ, ndmin=1)
+
+        nPlans = len(pInds)
+        luckier_dict = {
+            "beta": np.full(nPlans, np.nan) * u.rad,
+            "phi": np.full(nPlans, np.nan),
+            "dMag": np.full(nPlans, np.nan),
+            "WA": np.full(nPlans, np.nan) * u.arcsec,
+            "intTime": np.full(nPlans, np.nan) * u.day,
+        }
+
+        if nPlans == 0:
+            return luckier_dict
+
+        dist = TL.dist[sInd].to(u.AU)
+        iwa = mode["IWA"].to(u.rad)
+
+        for j, pInd in enumerate(pInds):
+            d = SU.d[pInd].to(u.AU)
+            inc = SU.I[pInd].to_value(u.rad)
+
+            # beta feasibility from inclination: |cos(beta)| <= sin(I)
+            sinI = np.clip(np.sin(inc), 0.0, 1.0)
+            beta_inc_min = np.arccos(sinI)
+            beta_inc_max = np.pi - beta_inc_min
+
+            # beta feasibility from IWA: WA(beta) >= IWA
+            s_iwa = np.tan(iwa.to_value(u.rad)) * dist
+            ratio = (s_iwa / d).decompose().value
+            if ratio > 1.0:
+                continue
+
+            ratio = np.clip(ratio, 0.0, 1.0)
+            beta_iwa_min = np.arcsin(ratio)
+            beta_iwa_max = np.pi - beta_iwa_min
+
+            beta_min = max(beta_inc_min, beta_iwa_min) + 1e-8
+            beta_max = min(beta_inc_max, beta_iwa_max) - 1e-8
+
+            if beta_max <= beta_min:
+                continue
+
+            if len(SU.phiIndex) == 0:
+                phiIndex = SU.phiIndex
+            else:
+                phiIndex = np.array([SU.phiIndex[pInd]])
+
+            def evaluate_beta(beta):
+                phi = np.atleast_1d(
+                    PPMod.calc_Phi(beta * u.rad, phiIndex=phiIndex)
+                )[0]
+                WA = np.arctan(d * np.sin(beta) / dist).to(u.arcsec)
+                dMag = deltaMag(SU.p[pInd], SU.Rp[pInd], d, phi)
+
+                intTime = OS.calc_intTime(
+                    TL,
+                    np.array([sInd]),
+                    u.Quantity(fZ, ndmin=1),
+                    u.Quantity([JEZ[j]]),
+                    np.array([dMag]),
+                    u.Quantity([WA]),
+                    mode,
+                )[0]
+
+                return phi, dMag, WA, intTime
+
+            if beta_max - beta_min < 1e-6:
+                beta_opt = 0.5 * (beta_min + beta_max)
+                phi_opt, dMag_opt, WA_opt, intTime_opt = evaluate_beta(beta_opt)
+            else:
+
+                def minimize_integration_time(beta):
+                    _, _, _, intTime = evaluate_beta(beta)
+                    val = intTime.to_value(u.day)
+                    if not np.isfinite(val):
+                        return np.inf
+                    return val
+
+                result = scipy.optimize.minimize_scalar(
+                    minimize_integration_time,
+                    bounds=(beta_min, beta_max),
+                    method="bounded",
+                    options={"xatol": 1e-3, "maxiter": 50},
+                )
+
+                if (not result.success) or (not np.isfinite(result.fun)):
+                    continue
+
+                beta_opt = result.x
+                phi_opt, dMag_opt, WA_opt, intTime_opt = evaluate_beta(beta_opt)
+
+            if not np.isfinite(intTime_opt.to_value(u.day)):
+                continue
+
+            luckier_dict["beta"][j] = beta_opt * u.rad
+            luckier_dict["phi"][j] = phi_opt
+            luckier_dict["dMag"][j] = dMag_opt
+            luckier_dict["WA"][j] = WA_opt
+            luckier_dict["intTime"][j] = intTime_opt
+
+        return luckier_dict
 
     def find_char_SNR(self, sInd, pIndsChar, startTime, intTime, mode):
         """Finds the SNR achieved by an observing mode after intTime days
