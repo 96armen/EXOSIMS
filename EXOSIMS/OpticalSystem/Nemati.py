@@ -198,7 +198,7 @@ class Nemati(OpticalSystem):
         # for characterization, Cb must include the planet
         if not (mode["detectionMode"]):
             _C_b = _C_b + ENF2 * _C_p0
-            _C_sp = _C_sr * TL.PostProcessing.ppFact_char(WA) * self.stabilityFact
+            _C_sp = _C_sr * TL.PostProcessing.ppFact_char(WA) * self.stabilityFact + _C_ez * self.ezFact
         else:
             # C_sp = spatial structure to the speckle including post-processing
             #        contrast factor and stability factor

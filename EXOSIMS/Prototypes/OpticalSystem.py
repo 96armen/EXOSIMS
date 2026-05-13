@@ -217,6 +217,8 @@ class OpticalSystem(object):
             All inputs not assigned to object attributes are considered to be default
             values to be used for filling in information in the optical system
             definition, and are copied into this dictionary for storage.
+        ezFact (float):
+            Exozodi inhomogeneous factor; multiplied by exozodi count rate for Csp calculation
         haveOcculter (bool):
             One or more starlight suppresion systems are starshade-based
         intCutoff (astropy.units.quantity.Quantity):
@@ -329,6 +331,7 @@ class OpticalSystem(object):
         bandpass_step=0.1,
         use_core_thruput_for_ez=False,
         csv_angsep_colname="r_as",
+        ezFact=0,
         **specs,
     ):
         # start the outspec
@@ -345,6 +348,7 @@ class OpticalSystem(object):
         self.stabilityFact = float(stabilityFact)  # stability factor for telescope
         self.texp_flag = bool(texp_flag)
         self.use_core_thruput_for_ez = bool(use_core_thruput_for_ez)
+        self.ezFact = float(ezFact)
 
         # get cache directory
         self.cachedir = get_cache_dir(cachedir)
