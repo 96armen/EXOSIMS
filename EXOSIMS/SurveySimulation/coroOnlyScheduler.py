@@ -367,6 +367,7 @@ class coroOnlyScheduler(SurveySimulation):
                                     char_fZ,
                                     char_JEZ,
                                     char_systemParams,
+                                    char_params_actual,
                                     char_SNR,
                                     char_intTime,
                                 ) = self.observation_characterization(
@@ -383,6 +384,13 @@ class coroOnlyScheduler(SurveySimulation):
                                 char_SNR = np.zeros(lenChar, dtype=float)
                                 char_fZ = 0.0 / u.arcsec**2
                                 char_systemParams = SU.dump_system_params(sInd)
+                                char_params_actual = {
+                                    "d": char_systemParams["d"].copy(),
+                                    "phi": char_systemParams["phi"].copy(),
+                                    "dMag": char_systemParams["dMag"].copy(),
+                                    "WA": char_systemParams["WA"].copy(),
+                                    "beta": np.full(len(pInds), np.nan) * u.rad,
+                                }
                             assert char_intTime != 0, "Integration time can't be 0."
 
                             # populate the DRM with characterization results
@@ -397,6 +405,13 @@ class coroOnlyScheduler(SurveySimulation):
                             char_data["char_SNR"] = char_SNR[:-1] if FA else char_SNR
                             char_data["char_fZ"] = char_fZ.to("1/arcsec2")
                             char_data["char_params"] = char_systemParams
+                            char_data["char_params_actual"] = {
+                                "d": char_params_actual["d"],
+                                "phi": char_params_actual["phi"],
+                                "dMag": char_params_actual["dMag"],
+                                "WA": char_params_actual["WA"],
+                                "beta": char_params_actual["beta"].to("deg"),
+                            }
 
                             if char_intTime is not None and np.any(characterized):
                                 char_comp = Comp.comp_per_intTime(
@@ -1041,6 +1056,10 @@ class coroOnlyScheduler(SurveySimulation):
             systemParams (dict):
                 Dictionary of time-dependant planet properties averaged over the
                 duration of the integration
+            charParamsActual (dict):
+                Dictionary of planet properties actually used for characterization.
+                For luckier_planets this includes the optimized beta,
+                phi, dMag, and WA .
             SNR (float ndarray):
                 Characterization signal-to-noise ratio of the observable planets.
                 Defaults to None.
@@ -1083,10 +1102,17 @@ class coroOnlyScheduler(SurveySimulation):
         systemParams = SU.dump_system_params(
             sInd
         )  # write current system params by default
+        charParamsActual = {
+            "d": systemParams["d"].copy(),
+            "phi": systemParams["phi"].copy(),
+            "dMag": systemParams["dMag"].copy(),
+            "WA": systemParams["WA"].copy(),
+            "beta": np.full(len(pInds), np.nan) * u.rad,
+        }
         SNR = np.zeros(len(det))
         intTime = None
         if len(det) == 0:  # nothing to characterize
-            return characterized, fZ, JEZ, systemParams, SNR, intTime
+            return characterized, fZ, JEZ, systemParams, charParamsActual, SNR, intTime
 
         # look for last detected planets that have not been fully characterized
         if not (FA):  # only true planets, no FA
@@ -1234,6 +1260,7 @@ class coroOnlyScheduler(SurveySimulation):
                     char_fZ,
                     char_JEZ,
                     char_systemParams,
+                    charParamsActual,
                     char_SNR,
                     char_intTime,
                 )
@@ -1256,6 +1283,7 @@ class coroOnlyScheduler(SurveySimulation):
                 fZs = np.zeros(self.ntFlux) << self.inv_arcsec2
                 JEZs = np.zeros((self.ntFlux, len(planinds))) << self.JEZ_unit
                 systemParamss = np.empty(self.ntFlux, dtype="object")
+                charParamsActuals = np.empty(self.ntFlux, dtype="object")
                 Ss = np.zeros((self.ntFlux, len(planinds)))
                 Ns = np.zeros((self.ntFlux, len(planinds)))
                 # integrate the signal (planet flux) and noise
@@ -1295,11 +1323,23 @@ class coroOnlyScheduler(SurveySimulation):
                     JEZs[i] = SU.scale_JEZ(sInd, mode, pInds=planinds)
                     # save planet parameters
                     systemParamss[i] = SU.dump_system_params(sInd)
+                    charParamsActuals[i] = {
+                        "d": systemParamss[i]["d"].copy(),
+                        "phi": systemParamss[i]["phi"].copy(),
+                        "dMag": systemParamss[i]["dMag"].copy(),
+                        "WA": systemParamss[i]["WA"].copy(),
+                        "beta": np.full(len(pInds), np.nan) * u.rad,
+                    }
                     # calculate signal and noise (electron count rates)
                     if SU.luckier_planets:
                         luckier_dict = self.calc_luckier_planet_params(
                             sInd, planinds, fZs[i], JEZs[i], mode
                         )
+                        char_inds = np.where(np.isin(pInds, planinds))[0]
+                        charParamsActuals[i]["beta"][char_inds] = luckier_dict["beta"]
+                        charParamsActuals[i]["phi"][char_inds] = luckier_dict["phi"]
+                        charParamsActuals[i]["dMag"][char_inds] = luckier_dict["dMag"]
+                        charParamsActuals[i]["WA"][char_inds] = luckier_dict["WA"]
                         Ss[i, :], Ns[i, :] = self.calc_signal_noise(
                             sInd,
                             planinds,
@@ -1323,7 +1363,12 @@ class coroOnlyScheduler(SurveySimulation):
                 systemParams = {
                     key: sum([systemParamss[x][key] for x in range(self.ntFlux)])
                     / float(self.ntFlux)
-                    for key in sorted(systemParamss[0])
+                    for key in systemParamss[0]
+                }
+                charParamsActual = {
+                    key: sum([charParamsActuals[x][key] for x in range(self.ntFlux)])
+                    / float(self.ntFlux)
+                    for key in charParamsActuals[0]
                 }
                 # calculate planets SNR
                 S = Ss.sum(0)
@@ -1442,7 +1487,15 @@ class coroOnlyScheduler(SurveySimulation):
             if np.any(self.sInd_charcounts[sInd] >= self.max_successful_chars):
                 self.ignore_stars = np.union1d(self.ignore_stars, [sInd]).astype(int)
 
-        return characterized.astype(int), fZ, JEZ, systemParams, SNR, intTime
+        return (
+            characterized.astype(int),
+            fZ,
+            JEZ,
+            systemParams,
+            charParamsActual,
+            SNR,
+            intTime,
+        )
 
     def test_observation_characterization(self, sInd, mode, mode_index):
         """Finds if characterizations are possible and relevant information
