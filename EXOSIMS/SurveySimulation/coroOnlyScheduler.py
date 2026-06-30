@@ -405,7 +405,7 @@ class coroOnlyScheduler(SurveySimulation):
                             char_data["char_SNR"] = char_SNR[:-1] if FA else char_SNR
                             char_data["char_fZ"] = char_fZ.to("1/arcsec2")
                             char_data["char_params"] = char_systemParams
-                            char_data["char_params_actual"] = {
+                            char_data["char_params_used"] = {
                                 "d": char_params_actual["d"],
                                 "phi": char_params_actual["phi"],
                                 "dMag": char_params_actual["dMag"],
@@ -1330,12 +1330,25 @@ class coroOnlyScheduler(SurveySimulation):
                         "WA": systemParamss[i]["WA"].copy(),
                         "beta": np.full(len(pInds), np.nan) * u.rad,
                     }
+                    char_inds = np.where(np.isin(pInds, planinds))[0]
                     # calculate signal and noise (electron count rates)
-                    if SU.luckier_planets:
+                    if SU.lucky_planets:
+                        phi = (1 / np.pi) * np.ones(len(planinds))
+                        charParamsActuals[i]["beta"][char_inds] = np.pi / 2 * u.rad
+                        charParamsActuals[i]["phi"][char_inds] = phi
+                        charParamsActuals[i]["dMag"][char_inds] = deltaMag(
+                            SU.p[planinds],
+                            SU.Rp[planinds],
+                            systemParamss[i]["d"][char_inds],
+                            phi,
+                        )
+                        charParamsActuals[i]["WA"][char_inds] = np.arctan(
+                            SU.a[planinds] / TL.dist[sInd]
+                        ).to("arcsec")
+                    elif SU.luckier_planets:
                         luckier_dict = self.calc_luckier_planet_params(
                             sInd, planinds, fZs[i], JEZs[i], mode
                         )
-                        char_inds = np.where(np.isin(pInds, planinds))[0]
                         charParamsActuals[i]["beta"][char_inds] = luckier_dict["beta"]
                         charParamsActuals[i]["phi"][char_inds] = luckier_dict["phi"]
                         charParamsActuals[i]["dMag"][char_inds] = luckier_dict["dMag"]
