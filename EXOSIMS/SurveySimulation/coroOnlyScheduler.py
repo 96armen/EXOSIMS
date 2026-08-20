@@ -760,23 +760,33 @@ class coroOnlyScheduler(SurveySimulation):
                             startTimes[char_star].reshape(1),
                             char_mode,
                         )
-                        JEZ = TL.JEZ0[char_mode["hex"]][char_star]
-                        if SU.lucky_planets:
-                            phi = (1 / np.pi) * np.ones(len(SU.d))
-                            dMag = deltaMag(SU.p, SU.Rp, SU.d, phi)[
-                                char_earths
-                            ]  # delta magnitude
-                            WA = np.arctan(SU.a / TL.dist[SU.plan2star]).to("arcsec")[
-                                char_earths
-                            ]  # working angle
-                        elif SU.luckier_planets:
-                            earth_JEZ = JEZ * np.ones(len(char_earths))
-                            luckier_dict = self.calc_luckier_planet_params(
-                                char_star, char_earths, fZ, earth_JEZ, char_mode
+                        if SU.lucky_planets or SU.luckier_planets:
+                            _, char_mode_intTimes[char_star], _ = self.choose_luck_primary(
+                                char_star,
+                                char_earths,
+                                fZ,
+                                char_mode,
+                                char_maxIntTime,
+                                margin=self.charMargin
                             )
-                            dMag = luckier_dict["dMag"]
-                            WA = luckier_dict["WA"]
+                            continue
+                        # if SU.lucky_planets:
+                        #     phi = (1 / np.pi) * np.ones(len(SU.d))
+                        #     dMag = deltaMag(SU.p, SU.Rp, SU.d, phi)[
+                        #         char_earths
+                        #     ]  # delta magnitude
+                        #     WA = np.arctan(SU.a / TL.dist[SU.plan2star]).to("arcsec")[
+                        #         char_earths
+                        #     ]  # working angle
+                        # elif SU.luckier_planets:
+                        #     earth_JEZ = JEZ * np.ones(len(char_earths))
+                        #     luckier_dict = self.calc_luckier_planet_params(
+                        #         char_star, char_earths, fZ, earth_JEZ, char_mode
+                        #     )
+                        #     dMag = luckier_dict["dMag"]
+                        #     WA = luckier_dict["WA"]
                         else:
+                            JEZ = TL.JEZ0[char_mode["hex"]][char_star]
                             dMag = SU.dMag[char_earths]
                             WA = SU.WA[char_earths]
 
@@ -1224,8 +1234,21 @@ class coroOnlyScheduler(SurveySimulation):
             # Save Current Time before attempting time allocation
             currentTimeNorm = TK.currentTimeNorm.copy()
             currentTimeAbs = TK.currentTimeAbs.copy()
-
-            if np.any(np.logical_and(pinds_earthlike, tochar)):
+            primary_pInd = None
+            if (SU.lucky_planets or SU.luckier_planets) and np.any(
+                np.logical_and(pinds_earthlike, tochar)
+            ):
+                earth_pInds = pIndsDet[np.logical_and(pinds_earthlike, tochar)]
+                primary_pInd, intTime, feasible_pInds = self.choose_luck_primary(
+                    sInd,
+                    earth_pInds,
+                    fZ,
+                    mode,
+                    OS.intCutoff,
+                    margin=self.charMargin,
+                )
+                tochar &= ~pinds_earthlike | np.isin(pIndsDet, feasible_pInds)
+            elif np.any(np.logical_and(pinds_earthlike, tochar)):
                 intTime = np.max(intTimes[np.logical_and(pinds_earthlike, tochar)])
             else:
                 intTime = np.max(intTimes[tochar])
@@ -1292,18 +1315,6 @@ class coroOnlyScheduler(SurveySimulation):
                     Obs.settlingTime.copy() + mode["syst"]["ohTime"].copy()
                 )  # accounts for the time since the current time
                 for i in range(self.ntFlux):
-                    # calculate signal and noise (electron count rates)
-                    if SU.lucky_planets:
-                        fZs[i] = ZL.fZ(
-                            Obs,
-                            TL,
-                            np.array([sInd], ndmin=1),
-                            currentTimeAbs.reshape(1),
-                            mode,
-                        )[0]
-                        Ss[i, :], Ns[i, :] = self.calc_signal_noise(
-                            sInd, planinds, dt, mode, fZ=fZs[i]
-                        )
                     # allocate first half of dt
                     timePlus += dt / 2.0
                     # calculate current zodiacal light brightness
@@ -1332,27 +1343,73 @@ class coroOnlyScheduler(SurveySimulation):
                     }
                     char_inds = np.where(np.isin(pInds, planinds))[0]
                     # calculate signal and noise (electron count rates)
+                    snr_dMag = systemParamss[i]["dMag"][char_inds].copy()
+                    snr_WA = systemParamss[i]["WA"][char_inds].copy()
+                    primary_in_planinds = (
+                        primary_pInd is not None and primary_pInd in planinds
+                    )
                     if SU.lucky_planets:
-                        phi = (1 / np.pi) * np.ones(len(planinds))
-                        charParamsActuals[i]["beta"][char_inds] = np.pi / 2 * u.rad
-                        charParamsActuals[i]["phi"][char_inds] = phi
-                        charParamsActuals[i]["dMag"][char_inds] = deltaMag(
-                            SU.p[planinds],
-                            SU.Rp[planinds],
-                            systemParamss[i]["d"][char_inds],
-                            phi,
-                        )
-                        charParamsActuals[i]["WA"][char_inds] = np.arctan(
-                            SU.a[planinds] / TL.dist[sInd]
-                        ).to("arcsec")
+                        if primary_in_planinds:
+                            plan_idx = np.where(planinds == primary_pInd)[0][0]
+                            char_idx = np.where(pInds == primary_pInd)[0][0]
+                            phi = 1 / np.pi
+                            primary_dMag = deltaMag(
+                                SU.p[primary_pInd],
+                                SU.Rp[primary_pInd],
+                                systemParamss[i]["d"][char_idx],
+                                phi,
+                            )
+                            primary_WA = np.arctan(
+                                SU.a[primary_pInd] / TL.dist[sInd]
+                            ).to("arcsec")
+                            charParamsActuals[i]["beta"][char_idx] = np.pi / 2 * u.rad
+                            charParamsActuals[i]["phi"][char_idx] = phi
+                            charParamsActuals[i]["dMag"][char_idx] = primary_dMag
+                            charParamsActuals[i]["WA"][char_idx] = primary_WA
+                            snr_dMag[plan_idx] = primary_dMag
+                            snr_WA[plan_idx] = primary_WA
+
+                        obs = (snr_WA > mode["IWA"]) & (snr_WA < mode["OWA"])
+                        if np.any(obs):
+                            C_p, C_b, C_sp = OS.Cp_Cb_Csp(
+                                TL,
+                                sInd,
+                                fZs[i],
+                                JEZs[i][obs],
+                                snr_dMag[obs],
+                                snr_WA[obs],
+                                mode,
+                                TK=TK,
+                            )
+                            t_int_s = dt.to_value(u.d) * self.day2sec
+                            Ss[i, obs] = C_p.to_value(self.inv_s) * t_int_s
+                            Ns[i, obs] = np.sqrt(
+                                C_b.to_value(self.inv_s) * t_int_s
+                                + (C_sp.to_value(self.inv_s) * t_int_s) ** 2
+                            )
                     elif SU.luckier_planets:
-                        luckier_dict = self.calc_luckier_planet_params(
-                            sInd, planinds, fZs[i], JEZs[i], mode
-                        )
-                        charParamsActuals[i]["beta"][char_inds] = luckier_dict["beta"]
-                        charParamsActuals[i]["phi"][char_inds] = luckier_dict["phi"]
-                        charParamsActuals[i]["dMag"][char_inds] = luckier_dict["dMag"]
-                        charParamsActuals[i]["WA"][char_inds] = luckier_dict["WA"]
+                        if primary_in_planinds:
+                            plan_idx = np.where(planinds == primary_pInd)[0][0]
+                            char_idx = np.where(pInds == primary_pInd)[0][0]
+                            luckier_dict = self.calc_luckier_planet_params(
+                                sInd,
+                                np.array([primary_pInd], dtype=int),
+                                fZs[i],
+                                u.Quantity([JEZs[i][plan_idx]]),
+                                mode,
+                            )
+                            charParamsActuals[i]["beta"][char_idx] = luckier_dict[
+                                "beta"
+                            ][0]
+                            charParamsActuals[i]["phi"][char_idx] = luckier_dict[
+                                "phi"
+                            ][0]
+                            charParamsActuals[i]["dMag"][char_idx] = luckier_dict[
+                                "dMag"
+                            ][0]
+                            charParamsActuals[i]["WA"][char_idx] = luckier_dict["WA"][0]
+                            snr_dMag[plan_idx] = luckier_dict["dMag"][0]
+                            snr_WA[plan_idx] = luckier_dict["WA"][0]
                         Ss[i, :], Ns[i, :] = self.calc_signal_noise(
                             sInd,
                             planinds,
@@ -1360,8 +1417,8 @@ class coroOnlyScheduler(SurveySimulation):
                             mode,
                             fZ=fZs[i],
                             JEZ=JEZs[i],
-                            dMag=luckier_dict["dMag"],
-                            WA=luckier_dict["WA"],
+                            dMag=snr_dMag,
+                            WA=snr_WA,
                         )
                     elif not SU.lucky_planets:
                         Ss[i, :], Ns[i, :] = self.calc_signal_noise(
@@ -1683,7 +1740,20 @@ class coroOnlyScheduler(SurveySimulation):
 
         # 4/ if yes, perform the characterization for the maximum char time
         if np.any(tochar):
-            if np.any(np.logical_and(pinds_earthlike, tochar)):
+            if (SU.lucky_planets or SU.luckier_planets) and np.any(
+                np.logical_and(pinds_earthlike, tochar)
+            ):
+                earth_pInds = pIndsDet[np.logical_and(pinds_earthlike, tochar)]
+                _, intTime, feasible_pInds = self.choose_luck_primary(
+                    sInd,
+                    earth_pInds,
+                    fZ,
+                    mode,
+                    OS.intCutoff,
+                    margin=self.charMargin,
+                )
+                tochar &= ~pinds_earthlike | np.isin(pIndsDet, feasible_pInds)
+            elif np.any(np.logical_and(pinds_earthlike, tochar)):
                 intTime = np.max(intTimes[np.logical_and(pinds_earthlike, tochar)])
             else:
                 intTime = np.max(intTimes[tochar])
@@ -1790,3 +1860,102 @@ class coroOnlyScheduler(SurveySimulation):
             sInds = np.where(tovisit)[0]
 
         return sInds
+    
+    def choose_luck_primary(self, sInd, pInds, fZ, mode, maxIntTime, margin=0.0):
+        """Helper method for choosing which planet in a multi-planet system is best
+        suited to being the primary, by treating each candidate planet as the only lucky/luckier
+        planet and leaving the others at their propagated positions.
+        Chooses primary that maximizes number of feasible planets and then minimizes the max integration time
+
+        Args:
+            sInd (int):
+                Target star index.
+            pInds (numpy.ndarray):
+                Candidate planet indices.
+            fZ (astropy.units.Quantity):
+                Local zodi flux.
+            mode (dict):
+                Current observing mode.
+            maxIntTime (astropy.units.Quantity):
+                Maximum allowed integration time from current scheduling constraints.
+            margin (float):
+                Fractional margin applied to calculated integration times.
+
+        Returns:
+            tuple:
+                primary_pInd (int or None):
+                    Planet index selected as primary.
+                intTime (astropy.units.Quantity):
+                    Selected system integration time.
+                feasible_pInds (numpy.ndarray):
+                    Planet indices feasible with the selected primary and integration time.
+        """
+        SU = self.SimulatedUniverse
+        OS = self.OpticalSystem
+        TL = self.TargetList
+        pInds = np.array(pInds, ndmin=1, dtype=int)
+        JEZ = SU.scale_JEZ(sInd, mode, pInds=pInds)
+        # get the propagated dMag and WA
+        dMag = SU.dMag[pInds].copy()
+        WA = SU.WA[pInds].copy()
+        # max cutoff time is the minimum between integration cutoff time and other constraints
+        cutoff = min(maxIntTime, OS.intCutoff)
+
+        # Single-candidate systems do not need the primary-in-turn comparison.
+        if len(pInds) == 1:
+            if SU.lucky_planets:
+                phi = (1 / np.pi) * np.ones(len(SU.d))
+                dMag = deltaMag(SU.p, SU.Rp, SU.d, phi)[pInds]
+                WA = np.arctan(SU.a / TL.dist[SU.plan2star]).to("arcsec")[pInds]
+                intTime = OS.calc_intTime(TL, sInd, fZ, JEZ, dMag, WA, mode)[0]
+            else:
+                intTime = self.calc_luckier_planet_params(
+                    sInd, pInds, fZ, JEZ, mode
+                )["intTime"][0]
+
+            intTime *= 1 + margin
+            if np.isfinite(intTime) and (intTime > self.zero_d) and (intTime < cutoff):
+                return pInds[0], intTime, pInds
+            return None, self.zero_d, np.array([], dtype=int)
+
+        # list of integration times if all planets are at their current propagated positions
+        propagated_intTimes = OS.calc_intTime(TL, sInd, fZ, JEZ, dMag, WA, mode)
+        propagated_intTimes *= 1 + margin
+        # if lucky, the luck_intTimes list holds the integration times if all planets are at quadrature
+        if SU.lucky_planets:
+            phi = (1 / np.pi) * np.ones(len(SU.d))
+            dMag = deltaMag(SU.p, SU.Rp, SU.d, phi)[pInds]
+            WA = np.arctan(SU.a / TL.dist[SU.plan2star]).to("arcsec")[pInds]  
+            luck_intTimes = OS.calc_intTime(TL, sInd, fZ, JEZ, dMag, WA, mode)
+        # if luckier, the luck_intTimes list holds the integration times if all planets are at their optimal position    
+        else:
+            luck_intTimes = self.calc_luckier_planet_params(sInd, pInds, fZ, JEZ, mode)["intTime"]
+        luck_intTimes *= 1 + margin
+        best_nplanets = 0
+        best_intTime = np.inf * u.d
+        best_primary = None
+        best_feasible_mask = None
+
+        # loop through each planet in the multi-planet system
+        # each acts as the primary in turn and we first maximize number of planets feasible
+        # and then minimie the integration time
+        for primary in range(len(pInds)):
+            temp = propagated_intTimes.copy()
+            temp[primary] = luck_intTimes[primary]
+            feasible_mask = np.isfinite(temp) & (temp > self.zero_d) & (temp < cutoff)
+            feasible = temp[feasible_mask]
+            if len(feasible) == 0:
+                continue
+            nplanets_below_cutoff = len(feasible)
+            candidate_intTime = np.max(feasible)
+            if (nplanets_below_cutoff > best_nplanets) or (
+                nplanets_below_cutoff == best_nplanets 
+                and candidate_intTime < best_intTime
+            ):
+                best_nplanets = nplanets_below_cutoff
+                best_intTime = candidate_intTime
+                best_primary = primary
+                best_feasible_mask = feasible_mask
+        if best_primary is None:
+            return None, self.zero_d, np.array([], dtype=int)
+        return pInds[best_primary], best_intTime, pInds[best_feasible_mask]
