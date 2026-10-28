@@ -7,7 +7,7 @@ import numpy as np
 import os
 from astropy.io.votable import parse
 from astropy.time import Time
-from EXOSIMS.util import statsFun
+from EXOSIMS.util.RejectionSampler import RejectionSampler
 import importlib.resources
 
 
@@ -19,7 +19,7 @@ class KnownRVPlanets(KeplerLike1):
 
     The data file read in by this class also provides all of the information
     about the target stars, and so no StarCatalog object is needed (only the
-    KnownRvPlanetsTargetList implementation).
+    KnownRVPlanetsTargetList implementation).
 
     To download a new copy of the data file:
 
@@ -43,6 +43,8 @@ class KnownRVPlanets(KeplerLike1):
         rvplanetfilepath (string):
             Full path to RV planet votable file from IPAC. If None,
             assumes default file in PlanetPopulation directory of EXOSIMS.
+        mass_sampler (:py:class:`~EXOSIMS.util.RejectionSampler.RejectionSampler`):
+            Sampler for the planet mass distribution (dist_mass) over Mprange.
         period (astropy Quantity array):
             Orbital period in units of day.  Error in perioderr.
         planetfile (str):
@@ -67,6 +69,10 @@ class KnownRVPlanets(KeplerLike1):
         self.rvplanetfilepath = rvplanetfilepath
         self.planetfile = planetfile
         KeplerLike1.__init__(self, smaknee=smaknee, esigma=esigma, **specs)
+
+        # sampler for mass distribution (unitless mass range)
+        Mpr = self.Mprange.to("earthMass").value
+        self.mass_sampler = RejectionSampler(self.dist_mass, Mpr[0], Mpr[1])
 
         # default file is ipac_2016-05-15
         if rvplanetfilepath is None:
@@ -208,8 +214,6 @@ class KnownRVPlanets(KeplerLike1):
 
         """
         n = self.gen_input_check(n)
-        # unitless mass range
-        Mpr = self.Mprange.to("earthMass").value
-        Mp = statsFun.simpSample(self.dist_mass, n, Mpr[0], Mpr[1]) * u.earthMass
+        Mp = self.mass_sampler(n) * u.earthMass
 
         return Mp
